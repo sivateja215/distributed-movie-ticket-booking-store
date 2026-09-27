@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"strings"
@@ -163,22 +164,8 @@ func (s *movieServer) ReplicateLogEntry(
 
 	for _, committedEntry := range appliedEntries {
 
-		if committedEntry.Command == "BOOK_SEAT" {
-
-			if err := s.store.Put(
-				committedEntry.Key,
-				committedEntry.Value,
-			); err != nil {
-				return nil, err
-			}
-
-			log.Printf(
-				"[%s] applied BOOK_SEAT to store: key=%s value=%s request_id=%s",
-				s.node.ID,
-				committedEntry.Key,
-				committedEntry.Value,
-				committedEntry.RequestID,
-			)
+		if err := s.applyCommittedBooking(committedEntry); err != nil {
+			return nil, err
 		}
 	}
 
@@ -188,6 +175,75 @@ func (s *movieServer) ReplicateLogEntry(
 		Status:  "committed",
 		Message: "Log entry committed by majority and applied to store",
 	}, nil
+}
+
+// ------------------------------------------------------------
+// Apply committed BOOK_SEAT entry
+// ------------------------------------------------------------
+
+func (s *movieServer) applyCommittedBooking(
+	entry raft.LogEntry,
+) error {
+
+	if entry.Command != "BOOK_SEAT" {
+		return nil
+	}
+
+	// The committed entry stores:
+	// Value = user_id|show_id|seat_id
+	parts := splitResult(entry.Value)
+
+	if len(parts) != 3 {
+		return fmt.Errorf(
+			"invalid BOOK_SEAT value for request_id=%s",
+			entry.RequestID,
+		)
+	}
+
+	userID := parts[0]
+	showID := parts[1]
+	seatID := parts[2]
+
+	seatKey := "seat:" + showID + ":" + seatID
+
+	// Mark the seat as booked.
+	if err := s.store.Put(seatKey, "booked"); err != nil {
+		return err
+	}
+
+	// Store booking information.
+	bookingKey := "booking:" + entry.RequestID
+	bookingValue := userID + "|" + showID + "|" + seatID
+
+	if err := s.store.Put(bookingKey, bookingValue); err != nil {
+		return err
+	}
+
+	// Store the complete request result for idempotency.
+	bookingID := "BK-" + entry.RequestID
+
+	result := bookingID + "|" +
+		showID + "|" +
+		seatID + "|" +
+		"confirmed|" +
+		"Seat booked successfully"
+
+	if err := s.store.SaveRequestResult(
+		entry.RequestID,
+		result,
+	); err != nil {
+		return err
+	}
+
+	log.Printf(
+		"[%s] applied BOOK_SEAT: seat=%s booking=%s request_id=%s",
+		s.node.ID,
+		seatKey,
+		bookingID,
+		entry.RequestID,
+	)
+
+	return nil
 }
 
 // ------------------------------------------------------------
@@ -221,22 +277,8 @@ func (s *movieServer) AppendEntries(
 
 		for _, committedEntry := range appliedEntries {
 
-			if committedEntry.Command == "BOOK_SEAT" {
-
-				if err := s.store.Put(
-					committedEntry.Key,
-					committedEntry.Value,
-				); err != nil {
-					return nil, err
-				}
-
-				log.Printf(
-					"[%s] applied BOOK_SEAT to follower store: key=%s value=%s request_id=%s",
-					s.node.ID,
-					committedEntry.Key,
-					committedEntry.Value,
-					committedEntry.RequestID,
-				)
+			if err := s.applyCommittedBooking(committedEntry); err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -304,7 +346,6 @@ func (s *movieServer) BookSeat(
 	)
 
 	if exists {
-
 		parts := splitResult(existingResult)
 
 		if len(parts) == 5 {
@@ -333,42 +374,77 @@ func (s *movieServer) BookSeat(
 		}, nil
 	}
 
-	// Generate deterministic booking ID.
-	bookingID := "BK-" + req.GetRequestId()
-
-	// Mark seat as booked.
-	if err := s.store.Put(seatKey, "booked"); err != nil {
-		return nil, err
+	// Only the Raft leader can accept a new booking.
+	if s.raft.GetRole() != raft.Leader {
+		return &movie.BookSeatResponse{
+			ShowId:  req.GetShowId(),
+			SeatId:  req.GetSeatId(),
+			Status:  "failed",
+			Message: "Node is not the Raft leader",
+		}, nil
 	}
 
-	// Store booking information.
-	bookingKey := "booking:" + req.GetRequestId()
-
+	// Store booking information in the Raft log value.
+	//
+	// Format:
+	// user_id|show_id|seat_id
 	bookingValue := req.GetUserId() + "|" +
 		req.GetShowId() + "|" +
 		req.GetSeatId()
 
-	if err := s.store.Put(bookingKey, bookingValue); err != nil {
-		return nil, err
+	entry := raft.LogEntry{
+		Term:      s.raft.GetTerm(),
+		Command:   "BOOK_SEAT",
+		Key:       seatKey,
+		Value:     bookingValue,
+		RequestID: req.GetRequestId(),
 	}
 
-	// Store complete request result for idempotency.
-	result := bookingID + "|" +
-		req.GetShowId() + "|" +
-		req.GetSeatId() + "|" +
-		"confirmed|" +
-		"Seat booked successfully"
+	// Append the booking to the leader's local Raft log.
+	index := s.raft.AppendLocalEntry(entry)
 
-	if err := s.store.SaveRequestResult(
-		req.GetRequestId(),
-		result,
-	); err != nil {
-		return nil, err
-	}
+	// Replicate the booking to follower nodes.
+	s.raft.ReplicateEntry(entry)
 
 	log.Printf(
-		"[%s] BookSeat: show_id=%s seat_id=%s user_id=%s request_id=%s",
+		"[%s] BookSeat Raft entry: index=%d term=%d key=%s request_id=%s",
 		s.node.ID,
+		index,
+		entry.Term,
+		entry.Key,
+		entry.RequestID,
+	)
+
+	// Wait for majority commit.
+	committed := s.raft.WaitForCommit(
+		index,
+		5*time.Second,
+	)
+
+	if !committed {
+		return &movie.BookSeatResponse{
+			ShowId:  req.GetShowId(),
+			SeatId:  req.GetSeatId(),
+			Status:  "failed",
+			Message: "Booking was not committed by a majority",
+		}, nil
+	}
+
+	// Apply newly committed entries to the state machine.
+	appliedEntries := s.raft.ApplyCommittedEntries()
+
+	for _, committedEntry := range appliedEntries {
+		if err := s.applyCommittedBooking(committedEntry); err != nil {
+			return nil, err
+		}
+	}
+
+	bookingID := "BK-" + req.GetRequestId()
+
+	log.Printf(
+		"[%s] BookSeat committed: booking_id=%s show_id=%s seat_id=%s user_id=%s request_id=%s",
+		s.node.ID,
+		bookingID,
 		req.GetShowId(),
 		req.GetSeatId(),
 		req.GetUserId(),
