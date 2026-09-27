@@ -30,12 +30,12 @@ func main() {
 	)
 	defer cancel()
 
-	// Test GetSeat.
+	// Check the seat that was committed through Raft.
 	getResponse, err := client.GetSeat(
 		ctx,
 		&movie.GetSeatRequest{
 			ShowId: "show-101",
-			SeatId: "B10",
+			SeatId: "A10",
 		},
 	)
 	if err != nil {
@@ -47,28 +47,5 @@ func main() {
 		getResponse.GetShowId(),
 		getResponse.GetSeatId(),
 		getResponse.GetStatus(),
-	)
-
-	// Test BookSeat.
-	bookResponse, err := client.BookSeat(
-		ctx,
-		&movie.BookSeatRequest{
-			ShowId:    "show-101",
-			SeatId:    "B10",
-			UserId:    "user-002",
-			RequestId: "req-002",
-		},
-	)
-	if err != nil {
-		log.Fatalf("BookSeat failed: %v", err)
-	}
-
-	log.Printf(
-		"BookSeat response: booking=%s show=%s seat=%s status=%s message=%s",
-		bookResponse.GetBookingId(),
-		bookResponse.GetShowId(),
-		bookResponse.GetSeatId(),
-		bookResponse.GetStatus(),
-		bookResponse.GetMessage(),
 	)
 }

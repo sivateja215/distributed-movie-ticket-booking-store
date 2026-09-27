@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"time"
 
 	movie "moviekv/api"
 	"moviekv/internal/node"
@@ -129,8 +130,7 @@ func (s *movieServer) ReplicateLogEntry(
 	// Append the entry to the leader's local log.
 	index := s.raft.AppendLocalEntry(entry)
 
-	// IMPORTANT:
-	// Replicate the same entry to follower nodes.
+	// Replicate the entry to follower nodes.
 	s.raft.ReplicateEntry(entry)
 
 	log.Printf(
@@ -143,11 +143,50 @@ func (s *movieServer) ReplicateLogEntry(
 		entry.RequestID,
 	)
 
+	// Wait until the entry is committed by a majority.
+	committed := s.raft.WaitForCommit(
+		index,
+		5*time.Second,
+	)
+
+	if !committed {
+		return &movie.ReplicateLogEntryResponse{
+			Index:   int32(index),
+			Term:    int32(entry.Term),
+			Status:  "uncommitted",
+			Message: "Entry was replicated but majority commit was not reached",
+		}, nil
+	}
+
+	// Apply all newly committed entries to the state machine.
+	appliedEntries := s.raft.ApplyCommittedEntries()
+
+	for _, committedEntry := range appliedEntries {
+
+		if committedEntry.Command == "BOOK_SEAT" {
+
+			if err := s.store.Put(
+				committedEntry.Key,
+				committedEntry.Value,
+			); err != nil {
+				return nil, err
+			}
+
+			log.Printf(
+				"[%s] applied BOOK_SEAT to store: key=%s value=%s request_id=%s",
+				s.node.ID,
+				committedEntry.Key,
+				committedEntry.Value,
+				committedEntry.RequestID,
+			)
+		}
+	}
+
 	return &movie.ReplicateLogEntryResponse{
 		Index:   int32(index),
 		Term:    int32(entry.Term),
-		Status:  "appended",
-		Message: "Log entry appended to leader",
+		Status:  "committed",
+		Message: "Log entry committed by majority and applied to store",
 	}, nil
 }
 
@@ -164,16 +203,43 @@ func (s *movieServer) AppendEntries(
 		int(req.GetTerm()),
 		req.GetLeaderId(),
 		req.GetEntries(),
+		int(req.GetLeaderCommit()),
 	)
 
 	log.Printf(
-		"[%s] AppendEntries: leader=%s term=%d entries=%d success=%t",
+		"[%s] AppendEntries: leader=%s term=%d entries=%d leaderCommit=%d success=%t",
 		s.node.ID,
 		req.GetLeaderId(),
 		req.GetTerm(),
 		len(req.GetEntries()),
+		req.GetLeaderCommit(),
 		success,
 	)
+
+	if success {
+		appliedEntries := s.raft.ApplyCommittedEntries()
+
+		for _, committedEntry := range appliedEntries {
+
+			if committedEntry.Command == "BOOK_SEAT" {
+
+				if err := s.store.Put(
+					committedEntry.Key,
+					committedEntry.Value,
+				); err != nil {
+					return nil, err
+				}
+
+				log.Printf(
+					"[%s] applied BOOK_SEAT to follower store: key=%s value=%s request_id=%s",
+					s.node.ID,
+					committedEntry.Key,
+					committedEntry.Value,
+					committedEntry.RequestID,
+				)
+			}
+		}
+	}
 
 	return &movie.AppendEntriesResponse{
 		Term:    int32(term),

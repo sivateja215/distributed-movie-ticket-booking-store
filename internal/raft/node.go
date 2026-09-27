@@ -35,7 +35,17 @@ type Node struct {
 
 	VotesReceived int
 
+	// Raft log.
 	Log *Log
+
+	// Highest log entry known to be committed.
+	CommitIndex int
+
+	// Highest log entry already applied to the state machine.
+	LastApplied int
+
+	// Successful replication acknowledgements for each log index.
+	ReplicationAcks map[int]map[string]bool
 }
 
 func NewNode(id string, peers map[string]string) *Node {
@@ -48,6 +58,11 @@ func NewNode(id string, peers map[string]string) *Node {
 		Peers:         peers,
 		VotesReceived: 0,
 		Log:           NewLog(),
+
+		CommitIndex: -1,
+		LastApplied: -1,
+
+		ReplicationAcks: make(map[int]map[string]bool),
 	}
 }
 
@@ -86,11 +101,34 @@ func (n *Node) GetLastLogTerm() int {
 	return n.Log.LastTerm()
 }
 
+func (n *Node) GetCommitIndex() int {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+
+	return n.CommitIndex
+}
+
+func (n *Node) GetLastApplied() int {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+
+	return n.LastApplied
+}
+
 func (n *Node) AppendLocalEntry(entry LogEntry) int {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
 	index := n.Log.Append(entry)
+
+	// The leader counts its own log as the first acknowledgement.
+	if n.Role == Leader {
+		if _, exists := n.ReplicationAcks[index]; !exists {
+			n.ReplicationAcks[index] = make(map[string]bool)
+		}
+
+		n.ReplicationAcks[index][n.ID] = true
+	}
 
 	log.Printf(
 		"[%s] appended local log entry: index=%d term=%d command=%s key=%s request_id=%s",
@@ -278,10 +316,15 @@ func (n *Node) StartElection() {
 	}
 }
 
+// HandleAppendEntries accepts an optional leader commit index.
+//
+// The optional argument keeps this method compatible with the current
+// server implementation while allowing the leader to send commit information.
 func (n *Node) HandleAppendEntries(
 	term int,
 	leaderID string,
 	entries []*movie.LogEntry,
+	leaderCommit ...int,
 ) (int, bool) {
 
 	n.mu.Lock()
@@ -325,7 +368,71 @@ func (n *Node) HandleAppendEntries(
 		)
 	}
 
+	// Update follower commit index if the leader supplied one.
+	if len(leaderCommit) > 0 {
+
+		leaderCommitIndex := leaderCommit[0]
+
+		if leaderCommitIndex > n.CommitIndex {
+
+			lastLogIndex := n.Log.LastIndex()
+
+			if leaderCommitIndex < lastLogIndex {
+				n.CommitIndex = leaderCommitIndex
+			} else {
+				n.CommitIndex = lastLogIndex
+			}
+
+			log.Printf(
+				"[%s] updated commitIndex=%d from leader=%s",
+				n.ID,
+				n.CommitIndex,
+				leaderID,
+			)
+		}
+	}
+
 	return n.CurrentTerm, true
+}
+
+func (n *Node) AcknowledgeReplication(
+	index int,
+	nodeID string,
+) bool {
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if _, exists := n.ReplicationAcks[index]; !exists {
+		n.ReplicationAcks[index] = make(map[string]bool)
+	}
+
+	n.ReplicationAcks[index][nodeID] = true
+
+	ackCount := len(n.ReplicationAcks[index])
+
+	// Peers contains all cluster nodes, including the current node.
+	clusterSize := len(n.Peers)
+
+	majority := clusterSize/2 + 1
+
+	if ackCount >= majority && index > n.CommitIndex {
+
+		n.CommitIndex = index
+
+		log.Printf(
+			"[%s] MAJORITY ACK reached for index=%d (%d/%d) -> commitIndex=%d",
+			n.ID,
+			index,
+			ackCount,
+			clusterSize,
+			n.CommitIndex,
+		)
+
+		return true
+	}
+
+	return false
 }
 
 func (n *Node) ReplicateEntry(entry LogEntry) {
@@ -345,6 +452,8 @@ func (n *Node) ReplicateEntry(entry LogEntry) {
 
 	term := n.CurrentTerm
 	leaderID := n.ID
+	index := n.Log.LastIndex()
+	commitIndex := n.CommitIndex
 
 	peers := make(map[string]string)
 
@@ -407,7 +516,7 @@ func (n *Node) ReplicateEntry(entry LogEntry) {
 							RequestId: entry.RequestID,
 						},
 					},
-					LeaderCommit: 0,
+					LeaderCommit: int32(commitIndex),
 				},
 			)
 
@@ -421,13 +530,27 @@ func (n *Node) ReplicateEntry(entry LogEntry) {
 				return
 			}
 
+			if !response.GetSuccess() {
+				log.Printf(
+					"[%s] follower %s rejected log entry index=%d",
+					n.ID,
+					peerID,
+					index,
+				)
+				return
+			}
+
+			committed := n.AcknowledgeReplication(
+				index,
+				peerID,
+			)
+
 			log.Printf(
-				"[%s] replicated log entry to %s: index=%d success=%t term=%d",
+				"[%s] replication ACK from %s: index=%d committed=%t",
 				n.ID,
 				peerID,
-				n.GetLastLogIndex(),
-				response.GetSuccess(),
-				response.GetTerm(),
+				index,
+				committed,
 			)
 
 		}(peerID, address)
@@ -445,6 +568,7 @@ func (n *Node) SendHeartbeats() {
 
 	term := n.CurrentTerm
 	leaderID := n.ID
+	commitIndex := n.CommitIndex
 
 	peers := make(map[string]string)
 
@@ -500,7 +624,7 @@ func (n *Node) SendHeartbeats() {
 					LeaderId:     leaderID,
 					PrevLogIndex: int32(n.GetLastLogIndex()),
 					PrevLogTerm:  int32(n.GetLastLogTerm()),
-					LeaderCommit: 0,
+					LeaderCommit: int32(commitIndex),
 				},
 			)
 
@@ -515,11 +639,12 @@ func (n *Node) SendHeartbeats() {
 			}
 
 			log.Printf(
-				"[%s] heartbeat → %s success=%t term=%d",
+				"[%s] heartbeat → %s success=%t term=%d commitIndex=%d",
 				n.ID,
 				peerID,
 				response.GetSuccess(),
 				response.GetTerm(),
+				commitIndex,
 			)
 
 		}(peerID, address)
@@ -539,4 +664,60 @@ func (n *Node) heartbeatLoop() {
 
 		n.SendHeartbeats()
 	}
+}
+
+func (n *Node) ApplyCommittedEntries() []LogEntry {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if n.CommitIndex <= n.LastApplied {
+		return nil
+	}
+
+	start := n.LastApplied + 1
+	end := n.CommitIndex
+
+	applied := make([]LogEntry, 0, end-start+1)
+
+	for index := start; index <= end; index++ {
+		entry, ok := n.Log.Get(index)
+
+		if !ok {
+			continue
+		}
+
+		applied = append(applied, entry)
+
+		log.Printf(
+			"[%s] applying committed entry: index=%d term=%d command=%s key=%s request_id=%s",
+			n.ID,
+			index,
+			entry.Term,
+			entry.Command,
+			entry.Key,
+			entry.RequestID,
+		)
+
+		n.LastApplied = index
+	}
+
+	return applied
+}
+
+func (n *Node) WaitForCommit(index int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		n.mu.RLock()
+		committed := n.CommitIndex >= index
+		n.mu.RUnlock()
+
+		if committed {
+			return true
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	return false
 }
