@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-func checkNode(nodeID string, address string) {
+func checkSeat(nodeID string, address string, showID string, seatID string) {
 	conn, err := grpc.NewClient(
 		address,
 		grpc.WithTransportCredentials(
@@ -36,12 +36,17 @@ func checkNode(nodeID string, address string) {
 	response, err := client.GetSeat(
 		ctx,
 		&movie.GetSeatRequest{
-			ShowId: "show-101",
-			SeatId: "A10",
+			ShowId: showID,
+			SeatId: seatID,
 		},
 	)
 	if err != nil {
-		log.Printf("[%s] GetSeat failed: %v", nodeID, err)
+		log.Printf(
+			"[%s] GetSeat failed for %s: %v",
+			nodeID,
+			seatID,
+			err,
+		)
 		return
 	}
 
@@ -55,11 +60,32 @@ func checkNode(nodeID string, address string) {
 }
 
 func main() {
-	log.Println("Checking A10 across all Raft nodes...")
+	log.Println("Checking C6 and C7 across all Raft nodes...")
 
-	checkNode("node1", "localhost:50051")
-	checkNode("node2", "localhost:50052")
-	checkNode("node3", "localhost:50053")
+	nodes := []struct {
+		id      string
+		address string
+	}{
+		{"node1", "localhost:50051"},
+		{"node2", "localhost:50052"},
+		{"node3", "localhost:50053"},
+	}
 
-	log.Println("3-node cluster verification completed")
+	for _, node := range nodes {
+		checkSeat(
+			node.id,
+			node.address,
+			"show-102",
+			"C6",
+		)
+
+		checkSeat(
+			node.id,
+			node.address,
+			"show-102",
+			"C7",
+		)
+	}
+
+	log.Println("Final 3-node booking consistency verification completed")
 }

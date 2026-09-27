@@ -33,9 +33,9 @@ func main() {
 	// ------------------------------------------------------------
 
 	showID := "show-102"
-	seatID := "C5"
-	userID := "user-123"
-	requestID := "req-integrated-001"
+	seatID := "D1"
+	userID := "user-persistence"
+	requestID := "req-persistence-001"
 
 	// ------------------------------------------------------------
 	// 1. Check seat before booking

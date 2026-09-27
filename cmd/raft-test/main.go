@@ -12,21 +12,16 @@ import (
 )
 
 func main() {
-
-	log.Println("Starting automatic Raft election")
+	log.Println("Starting Raft election on node2")
 
 	conn, err := grpc.NewClient(
-		"localhost:50051",
+		"localhost:50052",
 		grpc.WithTransportCredentials(
 			insecure.NewCredentials(),
 		),
 	)
-
 	if err != nil {
-		log.Fatalf(
-			"failed to connect to node1: %v",
-			err,
-		)
+		log.Fatalf("failed to connect to node2: %v", err)
 	}
 
 	defer conn.Close()
@@ -37,21 +32,16 @@ func main() {
 		context.Background(),
 		5*time.Second,
 	)
-
 	defer cancel()
 
 	response, err := client.StartElection(
 		ctx,
 		&movie.StartElectionRequest{
-			NodeId: "node1",
+			NodeId: "node2",
 		},
 	)
-
 	if err != nil {
-		log.Fatalf(
-			"StartElection failed: %v",
-			err,
-		)
+		log.Fatalf("StartElection failed: %v", err)
 	}
 
 	log.Printf(
@@ -61,8 +51,7 @@ func main() {
 		response.GetRole(),
 	)
 
-	// Give the candidate time to receive votes.
 	time.Sleep(2 * time.Second)
 
-	log.Println("Automatic Raft election test completed")
+	log.Println("Node2 election test completed")
 }

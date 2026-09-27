@@ -2,7 +2,9 @@ package raft
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -38,6 +40,9 @@ type Node struct {
 	// Raft log.
 	Log *Log
 
+	// Persistent Raft log WAL.
+	LogWAL *LogWAL
+
 	// Highest log entry known to be committed.
 	CommitIndex int
 
@@ -49,6 +54,46 @@ type Node struct {
 }
 
 func NewNode(id string, peers map[string]string) *Node {
+	if err := os.MkdirAll("data", 0755); err != nil {
+		log.Fatalf("[%s] failed to create data directory: %v", id, err)
+	}
+
+	walPath := fmt.Sprintf("data/raft-%s.log", id)
+
+	logWAL, err := NewLogWAL(walPath)
+	if err != nil {
+		log.Fatalf(
+			"[%s] failed to open Raft WAL %s: %v",
+			id,
+			walPath,
+			err,
+		)
+	}
+
+	recoveredEntries, err := logWAL.Replay()
+	if err != nil {
+		logWAL.Close()
+
+		log.Fatalf(
+			"[%s] failed to replay Raft WAL: %v",
+			id,
+			err,
+		)
+	}
+
+	raftLog := NewLog()
+
+	for _, entry := range recoveredEntries {
+		raftLog.Append(entry)
+	}
+
+	log.Printf(
+		"[%s] recovered %d Raft log entries from %s",
+		id,
+		len(recoveredEntries),
+		walPath,
+	)
+
 	return &Node{
 		ID:            id,
 		CurrentTerm:   0,
@@ -57,7 +102,8 @@ func NewNode(id string, peers map[string]string) *Node {
 		LeaderID:      "",
 		Peers:         peers,
 		VotesReceived: 0,
-		Log:           NewLog(),
+		Log:           raftLog,
+		LogWAL:        logWAL,
 
 		CommitIndex: -1,
 		LastApplied: -1,
@@ -118,6 +164,15 @@ func (n *Node) GetLastApplied() int {
 func (n *Node) AppendLocalEntry(entry LogEntry) int {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+
+	if err := n.LogWAL.Append(entry); err != nil {
+		log.Printf(
+			"[%s] failed to persist local Raft log entry: %v",
+			n.ID,
+			err,
+		)
+		return -1
+	}
 
 	index := n.Log.Append(entry)
 
@@ -232,7 +287,7 @@ func (n *Node) StartElection() {
 		term,
 	)
 
-	majority := (len(n.Peers)+1)/2 + 1
+	majority := len(n.Peers)/2 + 1
 
 	for peerID, address := range n.Peers {
 
@@ -342,8 +397,10 @@ func (n *Node) HandleAppendEntries(
 	n.Role = Follower
 	n.LeaderID = leaderID
 
-	// Append only entries that are not already present locally.
-	for _, entry := range entries {
+	// The leader sends its complete log in the simplified
+	// heartbeat implementation. Compare each incoming entry
+	// with the corresponding local index before appending it.
+	for index, entry := range entries {
 
 		internalEntry := LogEntry{
 			Term:      int(entry.GetTerm()),
@@ -353,17 +410,11 @@ func (n *Node) HandleAppendEntries(
 			RequestID: entry.GetRequestId(),
 		}
 
-		existingEntry, _ := n.Log.Get(
-			n.Log.LastIndex() + 1,
-		)
+		existingEntry, exists := n.Log.Get(index)
 
-		_ = existingEntry
-
-		// If the follower already has this exact entry at the next
-		// expected position, do not append it again.
-		nextIndex := n.Log.LastIndex() + 1
-
-		if existingEntry, ok := n.Log.Get(nextIndex); ok {
+		if exists {
+			// The follower already has this exact entry.
+			// Do not append it again.
 			if existingEntry.Term == internalEntry.Term &&
 				existingEntry.Command == internalEntry.Command &&
 				existingEntry.Key == internalEntry.Key &&
@@ -371,8 +422,24 @@ func (n *Node) HandleAppendEntries(
 				existingEntry.RequestID == internalEntry.RequestID {
 				continue
 			}
+
+			// If the entry differs, replace the local suffix
+			// with the leader's entry from this index onward.
+			n.Log.Entries = n.Log.Entries[:index]
 		}
 
+		// Persist the missing entry before adding it to the
+		// in-memory Raft log.
+		if err := n.LogWAL.Append(internalEntry); err != nil {
+			log.Printf(
+				"[%s] failed to persist replicated Raft log entry: %v",
+				n.ID,
+				err,
+			)
+			return n.CurrentTerm, false
+		}
+
+		// Append the missing entry.
 		n.Log.Append(internalEntry)
 
 		log.Printf(
@@ -761,4 +828,15 @@ func (n *Node) WaitForCommit(index int, timeout time.Duration) bool {
 	}
 
 	return false
+}
+
+func (n *Node) Close() error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if n.LogWAL == nil {
+		return nil
+	}
+
+	return n.LogWAL.Close()
 }
