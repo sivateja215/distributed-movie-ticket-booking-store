@@ -79,6 +79,3 @@ Example value:
 - Fault injection
 - Final performance evaluation
 
-## Current Status
-
-Week 1 foundation in progress.

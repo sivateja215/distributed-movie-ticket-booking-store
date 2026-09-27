@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package movie;
+
+option go_package = "moviekv/api/movie";
+
+service MovieTicketService {
+  rpc GetSeat(GetSeatRequest) returns (GetSeatResponse);
+  rpc BookSeat(BookSeatRequest) returns (BookSeatResponse);
+}
+
+message GetSeatRequest {
+  string show_id = 1;
+  string seat_id = 2;
+}
+
+message GetSeatResponse {
+  string show_id = 1;
+  string seat_id = 2;
+  string status = 3;
+}
+
+message BookSeatRequest {
+  string show_id = 1;
+  string seat_id = 2;
+  string user_id = 3;
+  string request_id = 4;
+}
+
+message BookSeatResponse {
+  string booking_id = 1;
+  string show_id = 2;
+  string seat_id = 3;
+  string status = 4;
+  string message = 5;
+}
