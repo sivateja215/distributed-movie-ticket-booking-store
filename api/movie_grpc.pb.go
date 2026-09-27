@@ -157,3 +157,321 @@ var MovieTicketService_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "api/movie.proto",
 }
+
+const (
+	NodeService_Ping_FullMethodName              = "/movie.NodeService/Ping"
+	NodeService_StartElection_FullMethodName     = "/movie.NodeService/StartElection"
+	NodeService_ReplicateLogEntry_FullMethodName = "/movie.NodeService/ReplicateLogEntry"
+)
+
+// NodeServiceClient is the client API for NodeService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type NodeServiceClient interface {
+	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
+	StartElection(ctx context.Context, in *StartElectionRequest, opts ...grpc.CallOption) (*StartElectionResponse, error)
+	ReplicateLogEntry(ctx context.Context, in *ReplicateLogEntryRequest, opts ...grpc.CallOption) (*ReplicateLogEntryResponse, error)
+}
+
+type nodeServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewNodeServiceClient(cc grpc.ClientConnInterface) NodeServiceClient {
+	return &nodeServiceClient{cc}
+}
+
+func (c *nodeServiceClient) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PingResponse)
+	err := c.cc.Invoke(ctx, NodeService_Ping_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) StartElection(ctx context.Context, in *StartElectionRequest, opts ...grpc.CallOption) (*StartElectionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StartElectionResponse)
+	err := c.cc.Invoke(ctx, NodeService_StartElection_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) ReplicateLogEntry(ctx context.Context, in *ReplicateLogEntryRequest, opts ...grpc.CallOption) (*ReplicateLogEntryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReplicateLogEntryResponse)
+	err := c.cc.Invoke(ctx, NodeService_ReplicateLogEntry_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// NodeServiceServer is the server API for NodeService service.
+// All implementations must embed UnimplementedNodeServiceServer
+// for forward compatibility.
+type NodeServiceServer interface {
+	Ping(context.Context, *PingRequest) (*PingResponse, error)
+	StartElection(context.Context, *StartElectionRequest) (*StartElectionResponse, error)
+	ReplicateLogEntry(context.Context, *ReplicateLogEntryRequest) (*ReplicateLogEntryResponse, error)
+	mustEmbedUnimplementedNodeServiceServer()
+}
+
+// UnimplementedNodeServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedNodeServiceServer struct{}
+
+func (UnimplementedNodeServiceServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Ping not implemented")
+}
+func (UnimplementedNodeServiceServer) StartElection(context.Context, *StartElectionRequest) (*StartElectionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method StartElection not implemented")
+}
+func (UnimplementedNodeServiceServer) ReplicateLogEntry(context.Context, *ReplicateLogEntryRequest) (*ReplicateLogEntryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReplicateLogEntry not implemented")
+}
+func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
+func (UnimplementedNodeServiceServer) testEmbeddedByValue()                     {}
+
+// UnsafeNodeServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to NodeServiceServer will
+// result in compilation errors.
+type UnsafeNodeServiceServer interface {
+	mustEmbedUnimplementedNodeServiceServer()
+}
+
+func RegisterNodeServiceServer(s grpc.ServiceRegistrar, srv NodeServiceServer) {
+	// If the following call panics, it indicates UnimplementedNodeServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&NodeService_ServiceDesc, srv)
+}
+
+func _NodeService_Ping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).Ping(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_Ping_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).Ping(ctx, req.(*PingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_StartElection_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartElectionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).StartElection(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_StartElection_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).StartElection(ctx, req.(*StartElectionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_ReplicateLogEntry_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReplicateLogEntryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).ReplicateLogEntry(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_ReplicateLogEntry_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).ReplicateLogEntry(ctx, req.(*ReplicateLogEntryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// NodeService_ServiceDesc is the grpc.ServiceDesc for NodeService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var NodeService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "movie.NodeService",
+	HandlerType: (*NodeServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Ping",
+			Handler:    _NodeService_Ping_Handler,
+		},
+		{
+			MethodName: "StartElection",
+			Handler:    _NodeService_StartElection_Handler,
+		},
+		{
+			MethodName: "ReplicateLogEntry",
+			Handler:    _NodeService_ReplicateLogEntry_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "api/movie.proto",
+}
+
+const (
+	RaftService_RequestVote_FullMethodName   = "/movie.RaftService/RequestVote"
+	RaftService_AppendEntries_FullMethodName = "/movie.RaftService/AppendEntries"
+)
+
+// RaftServiceClient is the client API for RaftService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type RaftServiceClient interface {
+	RequestVote(ctx context.Context, in *RequestVoteRequest, opts ...grpc.CallOption) (*RequestVoteResponse, error)
+	AppendEntries(ctx context.Context, in *AppendEntriesRequest, opts ...grpc.CallOption) (*AppendEntriesResponse, error)
+}
+
+type raftServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewRaftServiceClient(cc grpc.ClientConnInterface) RaftServiceClient {
+	return &raftServiceClient{cc}
+}
+
+func (c *raftServiceClient) RequestVote(ctx context.Context, in *RequestVoteRequest, opts ...grpc.CallOption) (*RequestVoteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RequestVoteResponse)
+	err := c.cc.Invoke(ctx, RaftService_RequestVote_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *raftServiceClient) AppendEntries(ctx context.Context, in *AppendEntriesRequest, opts ...grpc.CallOption) (*AppendEntriesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AppendEntriesResponse)
+	err := c.cc.Invoke(ctx, RaftService_AppendEntries_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// RaftServiceServer is the server API for RaftService service.
+// All implementations must embed UnimplementedRaftServiceServer
+// for forward compatibility.
+type RaftServiceServer interface {
+	RequestVote(context.Context, *RequestVoteRequest) (*RequestVoteResponse, error)
+	AppendEntries(context.Context, *AppendEntriesRequest) (*AppendEntriesResponse, error)
+	mustEmbedUnimplementedRaftServiceServer()
+}
+
+// UnimplementedRaftServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedRaftServiceServer struct{}
+
+func (UnimplementedRaftServiceServer) RequestVote(context.Context, *RequestVoteRequest) (*RequestVoteResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RequestVote not implemented")
+}
+func (UnimplementedRaftServiceServer) AppendEntries(context.Context, *AppendEntriesRequest) (*AppendEntriesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AppendEntries not implemented")
+}
+func (UnimplementedRaftServiceServer) mustEmbedUnimplementedRaftServiceServer() {}
+func (UnimplementedRaftServiceServer) testEmbeddedByValue()                     {}
+
+// UnsafeRaftServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to RaftServiceServer will
+// result in compilation errors.
+type UnsafeRaftServiceServer interface {
+	mustEmbedUnimplementedRaftServiceServer()
+}
+
+func RegisterRaftServiceServer(s grpc.ServiceRegistrar, srv RaftServiceServer) {
+	// If the following call panics, it indicates UnimplementedRaftServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&RaftService_ServiceDesc, srv)
+}
+
+func _RaftService_RequestVote_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RequestVoteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RaftServiceServer).RequestVote(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RaftService_RequestVote_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RaftServiceServer).RequestVote(ctx, req.(*RequestVoteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RaftService_AppendEntries_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AppendEntriesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RaftServiceServer).AppendEntries(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RaftService_AppendEntries_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RaftServiceServer).AppendEntries(ctx, req.(*AppendEntriesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// RaftService_ServiceDesc is the grpc.ServiceDesc for RaftService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var RaftService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "movie.RaftService",
+	HandlerType: (*RaftServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "RequestVote",
+			Handler:    _RaftService_RequestVote_Handler,
+		},
+		{
+			MethodName: "AppendEntries",
+			Handler:    _RaftService_AppendEntries_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "api/movie.proto",
+}
