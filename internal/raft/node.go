@@ -330,22 +330,19 @@ func (n *Node) HandleAppendEntries(
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	// Reject an old leader.
 	if term < n.CurrentTerm {
 		return n.CurrentTerm, false
 	}
 
-	// A newer term means this node must follow the new leader.
 	if term > n.CurrentTerm {
 		n.CurrentTerm = term
 		n.VotedFor = ""
-		n.LeaderID = ""
 	}
 
 	n.Role = Follower
 	n.LeaderID = leaderID
 
-	// Convert protobuf log entries into internal Raft log entries.
+	// Append only entries that are not already present locally.
 	for _, entry := range entries {
 
 		internalEntry := LogEntry{
@@ -356,11 +353,32 @@ func (n *Node) HandleAppendEntries(
 			RequestID: entry.GetRequestId(),
 		}
 
+		existingEntry, _ := n.Log.Get(
+			n.Log.LastIndex() + 1,
+		)
+
+		_ = existingEntry
+
+		// If the follower already has this exact entry at the next
+		// expected position, do not append it again.
+		nextIndex := n.Log.LastIndex() + 1
+
+		if existingEntry, ok := n.Log.Get(nextIndex); ok {
+			if existingEntry.Term == internalEntry.Term &&
+				existingEntry.Command == internalEntry.Command &&
+				existingEntry.Key == internalEntry.Key &&
+				existingEntry.Value == internalEntry.Value &&
+				existingEntry.RequestID == internalEntry.RequestID {
+				continue
+			}
+		}
+
 		n.Log.Append(internalEntry)
 
 		log.Printf(
-			"[%s] replicated log entry: term=%d command=%s key=%s request_id=%s",
+			"[%s] replicated log entry: index=%d term=%d command=%s key=%s request_id=%s",
 			n.ID,
+			n.Log.LastIndex(),
 			internalEntry.Term,
 			internalEntry.Command,
 			internalEntry.Key,
@@ -368,9 +386,7 @@ func (n *Node) HandleAppendEntries(
 		)
 	}
 
-	// Update follower commit index if the leader supplied one.
 	if len(leaderCommit) > 0 {
-
 		leaderCommitIndex := leaderCommit[0]
 
 		if leaderCommitIndex > n.CommitIndex {
@@ -570,6 +586,11 @@ func (n *Node) SendHeartbeats() {
 	leaderID := n.ID
 	commitIndex := n.CommitIndex
 
+	// Copy the current leader log so we can safely use it
+	// outside the read lock.
+	entries := make([]LogEntry, len(n.Log.Entries))
+	copy(entries, n.Log.Entries)
+
 	peers := make(map[string]string)
 
 	for peerID, address := range n.Peers {
@@ -587,6 +608,7 @@ func (n *Node) SendHeartbeats() {
 		go func(
 			peerID string,
 			address string,
+			entries []LogEntry,
 		) {
 
 			conn, err := grpc.NewClient(
@@ -612,18 +634,36 @@ func (n *Node) SendHeartbeats() {
 
 			ctx, cancel := context.WithTimeout(
 				context.Background(),
-				2*time.Second,
+				3*time.Second,
 			)
 
 			defer cancel()
+
+			protoEntries := make(
+				[]*movie.LogEntry,
+				0,
+				len(entries),
+			)
+
+			for _, entry := range entries {
+				protoEntries = append(
+					protoEntries,
+					&movie.LogEntry{
+						Term:      int32(entry.Term),
+						Command:   entry.Command,
+						Key:       entry.Key,
+						Value:     entry.Value,
+						RequestId: entry.RequestID,
+					},
+				)
+			}
 
 			response, err := client.AppendEntries(
 				ctx,
 				&movie.AppendEntriesRequest{
 					Term:         int32(term),
 					LeaderId:     leaderID,
-					PrevLogIndex: int32(n.GetLastLogIndex()),
-					PrevLogTerm:  int32(n.GetLastLogTerm()),
+					Entries:      protoEntries,
 					LeaderCommit: int32(commitIndex),
 				},
 			)
@@ -639,15 +679,16 @@ func (n *Node) SendHeartbeats() {
 			}
 
 			log.Printf(
-				"[%s] heartbeat → %s success=%t term=%d commitIndex=%d",
+				"[%s] heartbeat → %s success=%t term=%d entries=%d commitIndex=%d",
 				n.ID,
 				peerID,
 				response.GetSuccess(),
 				response.GetTerm(),
+				len(protoEntries),
 				commitIndex,
 			)
 
-		}(peerID, address)
+		}(peerID, address, entries)
 	}
 }
 
