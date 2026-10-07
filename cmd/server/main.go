@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -510,6 +511,18 @@ func main() {
 		"node1": "localhost:50051",
 		"node2": "localhost:50052",
 		"node3": "localhost:50053",
+	}
+
+	// Allow Kubernetes deployments to override peer addresses.
+	if peerConfig := os.Getenv("RAFT_PEERS"); peerConfig != "" {
+		peers = make(map[string]string)
+
+		for _, peer := range strings.Split(peerConfig, ",") {
+			parts := strings.SplitN(peer, "=", 2)
+			if len(parts) == 2 {
+				peers[parts[0]] = parts[1]
+			}
+		}
 	}
 
 	// Create node configuration.
