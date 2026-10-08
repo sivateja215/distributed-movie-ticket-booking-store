@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	"time"
 
 	movie "moviekv/api"
@@ -12,10 +13,15 @@ import (
 )
 
 func main() {
-	log.Println("Starting Raft election on node2")
+	endpoint := os.Getenv("RAFT_TEST_ENDPOINT")
+	if endpoint == "" {
+		endpoint = "localhost:50052"
+	}
+
+	log.Printf("Starting Raft election on node2 via %s", endpoint)
 
 	conn, err := grpc.NewClient(
-		"localhost:50052",
+		endpoint,
 		grpc.WithTransportCredentials(
 			insecure.NewCredentials(),
 		),

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	"time"
 
 	movie "moviekv/api"
@@ -12,9 +13,15 @@ import (
 )
 
 func main() {
+	endpoint := os.Getenv("MOVIE_CLIENT_ENDPOINT")
+	if endpoint == "" {
+		endpoint = "localhost:50051"
+	}
+
+	log.Printf("Connecting to movie service at %s", endpoint)
 
 	conn, err := grpc.NewClient(
-		"localhost:50051",
+		endpoint,
 		grpc.WithTransportCredentials(
 			insecure.NewCredentials(),
 		),
